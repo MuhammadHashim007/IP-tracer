@@ -84,7 +84,6 @@ def fetch_whois_metadata(domain: str) -> dict:
         return {"error": str(e)}
 
 
-# 1. Keep track of results across reruns
 if "trace_results" not in st.session_state:
     st.session_state.trace_results = None
 
@@ -115,7 +114,6 @@ if run_trace and target_input:
                 geo_data = fetch_ip_metadata(target_ip)
                 whois_data = fetch_whois_metadata(clean_target) if is_domain else None
                 
-                # Save into session_state so it never clears automatically
                 st.session_state.trace_results = {
                     "clean_target": clean_target,
                     "target_ip": target_ip,
@@ -127,7 +125,6 @@ if run_trace and target_input:
                 st.error(f"Error during trace execution: {err}")
                 st.session_state.trace_results = None
 
-# Render the output whenever data is stored
 if st.session_state.trace_results:
     res = st.session_state.trace_results
     clean_target = res["clean_target"]
@@ -168,7 +165,6 @@ if st.session_state.trace_results:
                 icon=folium.Icon(color="red", icon="info-sign")
             ).add_to(m)
 
-            # 2. returned_objects=[] prevents the map from firing automatic reload events
             st_folium(m, height=420, use_container_width=True, returned_objects=[])
         else:
             st.warning("Coordinates not available for this target.")
@@ -206,3 +202,10 @@ if st.session_state.trace_results:
         st.info("WHOIS domain queries are disabled when analyzing raw IPv4 addresses directly.")
 
     with st.expander("🔍 View Raw JSON Response"):
+        st.json({
+            "target": clean_target,
+            "ip_api_response": geo_data,
+            "whois_record": whois_data.get("Raw WHOIS") if whois_data and "Raw WHOIS" in whois_data else whois_data
+        })
+else:
+    st.info("Enter a domain or IP address in the sidebar and click **Trace Network** to begin.")
