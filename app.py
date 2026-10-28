@@ -24,18 +24,6 @@ st.markdown("""
         border: 1px solid #e9ecef;
         margin-bottom: 12px;
     }
-    .metric-title {
-        font-size: 0.85rem;
-        color: #6c757d;
-        text-transform: uppercase;
-        font-weight: 600;
-        margin-bottom: 4px;
-    }
-    .metric-value {
-        font-size: 1.15rem;
-        font-weight: 700;
-        color: #212529;
-    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -64,11 +52,9 @@ def resolve_to_ip(target: str) -> tuple[str, bool]:
 def fetch_ip_metadata(ip_address: str) -> dict:
     fields = "status,message,country,countryCode,region,regionName,city,zip,lat,lon,timezone,isp,org,as,query"
     url = f"http://ip-api.com/json/{ip_address}?fields={fields}"
-    
     response = requests.get(url, timeout=8)
     if response.status_code != 200:
         raise ConnectionError(f"HTTP {response.status_code} received from Geolocation endpoint.")
-    
     data = response.json()
     if data.get("status") != "success":
         raise ValueError(data.get("message", "Failed to retrieve IP metadata."))
@@ -78,7 +64,6 @@ def fetch_ip_metadata(ip_address: str) -> dict:
 def fetch_whois_metadata(domain: str) -> dict:
     try:
         w = whois.whois(domain)
-        
         def normalize_entry(val):
             if isinstance(val, list):
                 val = val[0]
@@ -99,6 +84,10 @@ def fetch_whois_metadata(domain: str) -> dict:
         return {"error": str(e)}
 
 
+# 1. Keep track of results across reruns
+if "trace_results" not in st.session_state:
+    st.session_state.trace_results = None
+
 with st.sidebar:
     st.title("🌐 Network Tracer")
     st.caption("Investigate IPs, Domain Infrastructure & ASNs")
@@ -118,18 +107,34 @@ st.caption("Query open geolocation endpoints and WHOIS registries without API ke
 if run_trace and target_input:
     with st.spinner("Analyzing target infrastructure..."):
         clean_target = clean_target_input(target_input)
-        
         if not clean_target:
             st.error("Please provide a valid domain or IP address.")
-            st.stop()
-            
-        try:
-            target_ip, is_domain = resolve_to_ip(clean_target)
-            geo_data = fetch_ip_metadata(target_ip)
-            whois_data = fetch_whois_metadata(clean_target) if is_domain else None
-        except Exception as err:
-            st.error(f"Error during trace execution: {err}")
-            st.stop()
+        else:
+            try:
+                target_ip, is_domain = resolve_to_ip(clean_target)
+                geo_data = fetch_ip_metadata(target_ip)
+                whois_data = fetch_whois_metadata(clean_target) if is_domain else None
+                
+                # Save into session_state so it never clears automatically
+                st.session_state.trace_results = {
+                    "clean_target": clean_target,
+                    "target_ip": target_ip,
+                    "is_domain": is_domain,
+                    "geo_data": geo_data,
+                    "whois_data": whois_data
+                }
+            except Exception as err:
+                st.error(f"Error during trace execution: {err}")
+                st.session_state.trace_results = None
+
+# Render the output whenever data is stored
+if st.session_state.trace_results:
+    res = st.session_state.trace_results
+    clean_target = res["clean_target"]
+    target_ip = res["target_ip"]
+    is_domain = res["is_domain"]
+    geo_data = res["geo_data"]
+    whois_data = res["whois_data"]
 
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("Resolved IP", geo_data.get("query", target_ip))
@@ -163,13 +168,13 @@ if run_trace and target_input:
                 icon=folium.Icon(color="red", icon="info-sign")
             ).add_to(m)
 
-            st_folium(m, height=420, use_container_width=True)
+            # 2. returned_objects=[] prevents the map from firing automatic reload events
+            st_folium(m, height=420, use_container_width=True, returned_objects=[])
         else:
             st.warning("Coordinates not available for this target.")
 
     with col_right:
         st.subheader("🏢 Network & Routing Intelligence")
-        
         routing_metrics = [
             ("Autonomous System (ASN)", geo_data.get("as", "N/A")),
             ("Internet Service Provider (ISP)", geo_data.get("isp", "N/A")),
@@ -177,7 +182,6 @@ if run_trace and target_input:
             ("Location", f"{geo_data.get('city', 'N/A')}, {geo_data.get('regionName', 'N/A')} ({geo_data.get('zip', 'N/A')})"),
             ("Timezone", geo_data.get("timezone", "N/A")),
         ]
-        
         routing_df = pd.DataFrame(routing_metrics, columns=["Attribute", "Value"])
         st.dataframe(routing_df, hide_index=True, use_container_width=True)
 
@@ -202,11 +206,3 @@ if run_trace and target_input:
         st.info("WHOIS domain queries are disabled when analyzing raw IPv4 addresses directly.")
 
     with st.expander("🔍 View Raw JSON Response"):
-        st.json({
-            "target": clean_target,
-            "ip_api_response": geo_data,
-            "whois_record": whois_data.get("Raw WHOIS") if whois_data and "Raw WHOIS" in whois_data else whois_data
-        })
-
-else:
-    st.info("Enter a domain or IP address in the sidebar and click **Trace Network** to begin.")
